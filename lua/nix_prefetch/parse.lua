@@ -260,8 +260,9 @@ function parse.update_buffer(bufnr, fetch_node, new_info)
 			---@type string
 			local key_text = ts.get_node_text(key_node, bufnr)
 			if key_text == "rev" or key_text == "hash" then
-				---@type string
-				local new_val = new_info[key_text]
+				---@type string, string
+				local lookup = key_text == "hash" and "sha256" or key_text
+				local new_val = new_info[lookup]
 				if new_val then
 					new_val = '"' .. new_val .. '"'
 					---@type integer

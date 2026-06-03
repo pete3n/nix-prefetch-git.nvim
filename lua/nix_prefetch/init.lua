@@ -158,26 +158,27 @@ function nix_prefetch.update(opts)
 	if opts.branch then
 		vim.notify(
 			"Fetching hash and rev for head of repo:\n"
-				.. tostring(git_info.owner)
-				.. "\\"
-				.. tostring(git_info.repo)
-				.. "\nbranch: "
-				.. opts.branch,
+			.. tostring(git_info.owner)
+			.. "\\"
+			.. tostring(git_info.repo)
+			.. "\nbranch: "
+			.. opts.branch,
 			vim.log.levels.INFO
 		)
 	elseif opts.rev then
 		vim.notify(
 			"Fetching hash for repo:\n"
-				.. tostring(git_info.owner)
-				.. "\\"
-				.. tostring(git_info.repo)
-				.. "\nrev: "
-				.. opts.rev,
+			.. tostring(git_info.owner)
+			.. "\\"
+			.. tostring(git_info.repo)
+			.. "\nrev: "
+			.. opts.rev,
 			vim.log.levels.INFO
 		)
 	else
 		vim.notify(
-			"Fetching rev and hash for default branch of repo:\n" .. tostring(git_info.owner) .. "\\" .. tostring(git_info.repo),
+			"Fetching rev and hash for default branch of repo:\n" ..
+			tostring(git_info.owner) .. "\\" .. tostring(git_info.repo),
 			vim.log.levels.INFO
 		)
 	end
@@ -195,9 +196,14 @@ function nix_prefetch.update(opts)
 			end
 
 			local fetch_node = node_pair.fetch_node.node
+			-- Convert base32 to SRI once
+			local sri_hash = vim.trim(vim.fn.system({
+				"nix", "hash", "convert", "--hash-algo", "sha256", "--to", "sri", result.sha256
+			}))
+			result.sha256 = sri_hash
 			parse.update_buffer(bufnr, fetch_node, result)
 
-			vim.notify("Nix prefetch updated: \nrev=" .. result.rev .. "\nhash=" .. result.sha256, vim.log.levels.INFO)
+			vim.notify("Nix prefetch updated: \nrev=" .. result.rev .. "\nhash=" .. sri_hash, vim.log.levels.INFO)
 		end)
 	end)
 
