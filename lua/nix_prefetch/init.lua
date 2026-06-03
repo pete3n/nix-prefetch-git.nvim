@@ -195,6 +195,12 @@ function nix_prefetch.update(opts)
 				return
 			end
 
+			vim.notify("DEBUG raw sha256: '" .. tostring(result.sha256) .. "'", vim.log.levels.INFO)
+			local sri_hash = vim.trim(vim.fn.system({
+				"nix", "hash", "convert", "--hash-algo", "sha256", "--to", "sri", result.sha256
+			}))
+			vim.notify("DEBUG converted: '" .. sri_hash .. "' exit=" .. tostring(vim.v.shell_error), vim.log.levels.INFO)
+
 			local fetch_node = node_pair.fetch_node.node
 			-- Convert base32 to SRI once
 			local sri_hash = vim.trim(vim.fn.system({
