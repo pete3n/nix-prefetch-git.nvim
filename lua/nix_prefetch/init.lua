@@ -58,8 +58,61 @@ local function _create_git_info(attrs_dict, query_name)
 	return git_info, nil
 end
 
--- We need to pull the current repo to check for updated rev and hash info
 ---@private
+--- Construct the archive tarball URL for a given git forge, used to compute
+--- the correct SRI hash that matches fetchFromGitHub / fetchFromGitLab.
+---@param git_info GitTriplet
+---@param rev string
+---@return string archive_url
+local function _create_archive_url(git_info, rev)
+	---@type string
+	local base = "https://" .. git_info.forge .. "/" .. git_info.owner .. "/" .. git_info.repo
+	return base .. "/archive/" .. rev .. ".tar.gz"
+end
+
+---@private
+--- Compute the SRI hash for a fetchFromGitHub-compatible archive tarball.
+--- Uses `nix store prefetch-file --unpack` which mirrors what fetchFromGitHub
+--- does internally, producing a matching hash.
+---@param archive_url string
+---@param timeout integer
+---@param callback fun(sri_hash: string?): nil
+local function _prefetch_archive_hash(archive_url, timeout, callback)
+	---@type string[]
+	local cmd = {
+		"nix", "store", "prefetch-file",
+		"--json", "--hash-type", "sha256", "--unpack",
+		archive_url,
+	}
+
+	vim.system(cmd, { text = true, timeout = timeout }, function(obj)
+		vim.schedule(function()
+			if obj.code ~= 0 then
+				---@type string
+				local err_msg = obj.stderr and vim.trim(obj.stderr) or "Unknown error"
+				vim.notify(
+					"nix store prefetch-file failed:\n" .. err_msg,
+					vim.log.levels.ERROR
+				)
+				callback(nil)
+				return
+			end
+
+			---@type boolean, table?
+			local decode_ok, hash_result = pcall(vim.json.decode, obj.stdout)
+			if not decode_ok or not hash_result.hash then
+				vim.notify("Failed to parse nix store prefetch-file output", vim.log.levels.ERROR)
+				callback(nil)
+				return
+			end
+
+			callback(hash_result.hash)
+		end)
+	end)
+end
+
+---@private
+-- Pull the current repo to check for updated rev and hash info
 ---@param git_info GitTriplet
 ---@param opts? NPUpdateOpts
 ---@param callback fun(result: table<string, any>?): nil
@@ -122,6 +175,9 @@ end
 
 ---@tag nix_prefetch.update()
 ---@brief Update a Nix src repository.
+--- Uses nix-prefetch-git to resolve the target rev, then computes the
+--- correct SRI hash via `nix store prefetch-file --unpack` using the
+--- forge's archive tarball URL (matching fetchFromGitHub behavior).
 ---
 ---@param opts? NPUpdateOpts
 ---@return boolean updated, string? err
@@ -177,8 +233,10 @@ function nix_prefetch.update(opts)
 		)
 	else
 		vim.notify(
-			"Fetching rev and hash for default branch of repo:\n" ..
-			tostring(git_info.owner) .. "\\" .. tostring(git_info.repo),
+			"Fetching rev and hash for default branch of repo:\n"
+			.. tostring(git_info.owner)
+			.. "\\"
+			.. tostring(git_info.repo),
 			vim.log.levels.INFO
 		)
 	end
@@ -195,21 +253,32 @@ function nix_prefetch.update(opts)
 				return
 			end
 
-			vim.notify("DEBUG raw sha256: '" .. tostring(result.sha256) .. "'", vim.log.levels.INFO)
-			local sri_hash = vim.trim(vim.fn.system({
-				"nix", "hash", "convert", "--hash-algo", "sha256", "--to", "sri", result.sha256
-			}))
-			vim.notify("DEBUG converted: '" .. sri_hash .. "' exit=" .. tostring(vim.v.shell_error), vim.log.levels.INFO)
+			---@type string
+			local archive_url = _create_archive_url(git_info, result.rev)
 
-			local fetch_node = node_pair.fetch_node.node
-			-- Convert base32 to SRI once
-			local sri_hash = vim.trim(vim.fn.system({
-				"nix", "hash", "convert", "--hash-algo", "sha256", "--to", "sri", result.sha256
-			}))
-			result.sha256 = sri_hash
-			parse.update_buffer(bufnr, fetch_node, result)
+			_prefetch_archive_hash(archive_url, cfg.timeout or 5000, function(sri_hash)
+				if not sri_hash then
+					vim.notify("Failed to compute SRI hash for archive.", vim.log.levels.ERROR)
+					return
+				end
 
-			vim.notify("Nix prefetch updated: \nrev=" .. result.rev .. "\nhash=" .. sri_hash, vim.log.levels.INFO)
+				if not vim.api.nvim_buf_is_valid(bufnr) then
+					vim.notify("Buffer is no longer valid, cannot apply update.", vim.log.levels.WARN)
+					return
+				end
+
+				-- Replace the base32 sha256 with the correct SRI hash
+				result.sha256 = sri_hash
+
+				---@type TSNode
+				local fetch_node = node_pair.fetch_node.node
+				parse.update_buffer(bufnr, fetch_node, result)
+
+				vim.notify(
+					"Nix prefetch updated:\nrev=" .. result.rev .. "\nhash=" .. sri_hash,
+					vim.log.levels.INFO
+				)
+			end)
 		end)
 	end)
 
